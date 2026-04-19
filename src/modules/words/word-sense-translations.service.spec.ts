@@ -70,8 +70,12 @@ describe('WordSenseTranslationsService', () => {
   describe('create', () => {
     const dto = { wordSenseId: 1, language: 'en', translation: 'Hello' };
 
-    // [TC-TRANS-001] Kiểm tra việc tạo mới bản dịch thành công
-    it('nên tạo và lưu bản dịch mới khi ngôn ngữ chưa tồn tại cho nghĩa này (TC-TRANS-001)', async () => {
+    /**
+     * [TC-TRANS-001] Kiểm tra quy trình đăng ký một bản dịch mới cho một "nghĩa" (word sense) cụ thể.
+     * Xác nhận rằng khi ngôn ngữ cung cấp chưa tồn tại trong danh sách dịch của nghĩa đó, hệ thống sẽ 
+     * thực hiện tạo mới và lưu trữ bản dịch vào cơ sở dữ liệu thành công.
+     */
+    it('should create and save a new translation when the target language does not exist for this sense (TC-TRANS-001)', async () => {
       // Giả lập: Không tìm thấy bản dịch trùng lặp
       mockTranslationRepo.findOne.mockResolvedValue(null);
       mockTranslationRepo.create.mockReturnValue(dto);
@@ -84,8 +88,12 @@ describe('WordSenseTranslationsService', () => {
       expect(mockTranslationRepo.save).toHaveBeenCalled();
     });
 
-    // [TC-TRANS-002] Kiểm tra lỗi khi tạo bản dịch bị trùng ngôn ngữ cho cùng một nghĩa
-    it('nên báo lỗi BadRequestException nếu bản dịch cùng ngôn ngữ đã tồn tại (TC-TRANS-002)', async () => {
+    /**
+     * [TC-TRANS-002] Xác thực tính duy nhất của ngôn ngữ bản dịch trong cùng một nghĩa của từ.
+     * Kịch bản này kiểm tra xem hệ thống có ngăn chặn việc tạo bản dịch mới nếu ngôn ngữ đó đã tồn tại hay không.
+     * Mong đợi một lỗi BadRequestException được ném ra để bảo vệ tính toàn vẹn dữ liệu.
+     */
+    it('should throw BadRequestException if a translation with the same language already exists for the sense (TC-TRANS-002)', async () => {
       // Giả lập: Đã tồn tại bản dịch tiếng Anh cho sense này
       mockTranslationRepo.findOne.mockResolvedValue({ id: 5, language: 'en' });
 
@@ -119,8 +127,11 @@ describe('WordSenseTranslationsService', () => {
   });
 
   describe('findById', () => {
-    // [TC-TRANS-005] Tìm bản dịch theo ID thành công
-    it('nên trả về đối tượng bản dịch nếu ID tồn tại (TC-TRANS-005)', async () => {
+    /**
+     * [TC-TRANS-005] Kiểm tra chức năng truy xuất thông tin bản dịch cụ thể thông qua mã ID duy nhất.
+     * Kỳ vọng hệ thống trả về đối tượng bản dịch chính xác nếu ID tồn tại trong hệ thống.
+     */
+    it('should return the translation object when the provided ID exists (TC-TRANS-005)', async () => {
       const translation = { id: 1, translation: 'test' };
       mockTranslationRepo.findOne.mockResolvedValue(translation);
 
@@ -130,8 +141,11 @@ describe('WordSenseTranslationsService', () => {
       expect(mockTranslationRepo.findOne).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 1 } }));
     });
 
-    // [TC-TRANS-006] Tìm bản dịch theo ID không tồn tại
-    it('nên báo lỗi NotFoundException nếu ID không tồn tại (TC-TRANS-006)', async () => {
+    /**
+     * [TC-TRANS-006] Xác minh khả năng xử lý của hệ thống khi cố gắng tìm một bản dịch không có thực.
+     * Đảm bảo tính nhất quán của API khi ném ra NotFoundException cho các yêu cầu ID không hợp lệ.
+     */
+    it('should throw NotFoundException if the translation ID does not exist in the database (TC-TRANS-006)', async () => {
       mockTranslationRepo.findOne.mockResolvedValue(null);
       await expect(service.findById(999)).rejects.toThrow(NotFoundException);
     });

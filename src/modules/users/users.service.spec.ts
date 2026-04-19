@@ -54,8 +54,12 @@ describe('UsersService', () => {
   });
 
   describe('create', () => {
-    // [TC-USR-001] Tạo người dùng mới thành công
-    it('nên tạo và lưu một người dùng mới (TC-USR-001)', async () => {
+    /**
+     * [TC-USR-001] Kiểm tra chức năng đăng ký người dùng mới vào hệ thống.
+     * Quy trình bao gồm việc mã hóa mật khẩu bên ngoài service và gọi lưu trữ vào repository.
+     * Kỳ vọng hệ thống trả về thông tin người dùng kèm theo mã định danh (ID) duy nhất.
+     */
+    it('should successfully create and save a new user record (TC-USR-001)', async () => {
       const dto = { email: 'test@example.com', displayName: 'Test' };
       const passwordHash = 'hashed_password';
       mockUserRepo.create.mockReturnValue({ ...dto, passwordHash });
@@ -70,8 +74,11 @@ describe('UsersService', () => {
   });
 
   describe('findByEmail', () => {
-    // [TC-USR-002] Tìm người dùng theo Email
-    it('nên trả về user nếu email tồn tại (TC-USR-002)', async () => {
+    /**
+     * [TC-USR-002] Truy vấn thông tin người dùng dựa trên địa chỉ email.
+     * Kịch bản này kiểm tra xem hệ thống có trả về đúng tài khoản khi email tồn tại trong DB hay không.
+     */
+    it('should return the user object when the provided email exists (TC-USR-002)', async () => {
       mockUserRepo.findOne.mockResolvedValue({ id: 1, email: 'test@test.com' });
       const result = await service.findByEmail('test@test.com');
       expect(result!.id).toBe(1);
