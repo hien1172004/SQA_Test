@@ -70,9 +70,10 @@ describe('UserProgressService', () => {
 
   describe('completeLesson', () => {
     /**
-     * [TC-PROG-001] Hoàn thành bài học nhưng không tìm thấy user
+     * [TC-PROG-001] Xác thực khả năng xử lý của hệ thống khi ghi nhận tiến độ bài học cho người dùng không tồn tại.
+     * Quy trình kiểm thử đảm bảo ném lỗi NotFoundException khi userId không hợp lệ.
      */
-    it('nên báo lỗi NotFoundException nếu không tìm thấy user (TC-PROG-001)', async () => {
+    it('should throw NotFoundException if the user does not exist during lesson completion (TC-PROG-001)', async () => {
       (userRepo.findOne as jest.Mock).mockResolvedValue(null);
       await expect(service.completeLesson(1, 1, 100)).rejects.toThrow(NotFoundException);
     });
@@ -87,9 +88,11 @@ describe('UserProgressService', () => {
     });
 
     /**
-     * [TC-PROG-003] Hoàn thành bài học lần đầu (tạo mới progress)
+     * [TC-PROG-003] Kiểm tra chức năng ghi nhận tiến độ lần đầu tiên cho một bài học (New Progress).
+     * Xác nhận rằng hệ thống khởi tạo bản ghi tiến độ mới, gán trạng thái COMPLETED 
+     * và gọi dịch vụ SRS (Spaced Repetition System) để khởi tạo các câu hỏi ôn tập.
      */
-    it('nên tạo mới bản ghi tiến độ khi hoàn thành bài học lần đầu (TC-PROG-003)', async () => {
+    it('should create a new progress record when completing a lesson for the first time (TC-PROG-003)', async () => {
       const user = { id: 1, lastStudyDate: null };
       const lesson = { id: 1, name: 'Lesson 1' };
       (userRepo.findOne as jest.Mock).mockResolvedValue(user);
@@ -142,9 +145,10 @@ describe('UserProgressService', () => {
 
   describe('updateStudyStreak (Logic Chuỗi Học Tập)', () => {
     /**
-     * [TC-STREAK-01] Học ngày đầu tiên
+     * [TC-STREAK-01] Kiểm tra logic khởi tạo chuỗi học tập (Streak) cho người dùng mới bắt đầu.
+     * Xác nhận rằng trong lần học đầu tiên, cả chuỗi hiện tại và chuỗi dài nhất đều được đặt là 1.
      */
-    it('nên khởi tạo chuỗi là 1 cho ngày đầu tiên (TC-STREAK-01)', async () => {
+    it('should initialize study streak to 1 for the first study session (TC-STREAK-01)', async () => {
       const user = { id: 1, lastStudyDate: null, currentStreak: 0, longestStreak: 0, totalStudyDays: 0 };
       const lesson = { id: 1 };
       (userRepo.findOne as jest.Mock).mockResolvedValue(user);

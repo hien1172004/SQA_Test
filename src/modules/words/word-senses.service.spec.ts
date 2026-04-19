@@ -73,8 +73,12 @@ describe('WordSensesService', () => {
   });
 
   describe('create', () => {
-    // [TC-SENSE-003] Tạo mới một nghĩa thành công
-    it('nên tạo và lưu nghĩa mới (TC-SENSE-003)', async () => {
+    /**
+     * [TC-SENSE-003] Kiểm tra logic nghiệp vụ khi khởi tạo và lưu trữ một nghĩa (sense) mới cho từ vựng.
+     * Dữ liệu đầu vào bao gồm mã từ vựng (wordId) và phiên âm. Hệ thống sẽ tự động tính toán STT nghĩa (senseNumber) tiếp theo.
+     * Đảm bảo bản ghi được lưu thành công vào cơ sở dữ liệu giả lập.
+     */
+    it('should create and save a new word sense with correct auto-incremented senseNumber (TC-SENSE-003)', async () => {
       const dto = { wordId: 1, pinyin: 'test' };
       const savedSense = { id: 10, ...dto, senseNumber: 1 };
       
@@ -121,8 +125,11 @@ describe('WordSensesService', () => {
   });
 
   describe('findById', () => {
-    // [TC-SENSE-006] Tìm nghĩa theo ID thành công
-    it('nên trả về nghĩa khi tìm thấy (TC-SENSE-006)', async () => {
+    /**
+     * [TC-SENSE-006] Truy vấn dữ liệu chi tiết của một nghĩa nhất định thông qua mã định danh ID.
+     * Quy trình này xác nhận rằng hệ thống trả về đúng thực thể WordSense đã được lưu trong repository.
+     */
+    it('should return the word sense object when the ID is valid and exists (TC-SENSE-006)', async () => {
       const sense = { id: 1 };
       mockWordSensesRepo.findOne.mockResolvedValue(sense);
 
@@ -132,8 +139,11 @@ describe('WordSensesService', () => {
       expect(mockWordSensesRepo.findOne).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 1 } }));
     });
 
-    // [TC-SENSE-007] Lỗi khi không tìm thấy nghĩa theo ID
-    it('nên báo lỗi NotFoundException khi không tìm thấy (TC-SENSE-007)', async () => {
+    /**
+     * [TC-SENSE-007] Kiểm tra cơ chế xử lý lỗi và tính toàn vẹn khi truy cập vào ID nghĩa không tồn tại.
+     * Hệ quy chiếu yêu cầu hệ thống phải ném ra ngoại lệ NotFoundException để thông báo người dùng/Client.
+     */
+    it('should throw NotFoundException if the provided word sense ID does not exist in the database (TC-SENSE-007)', async () => {
       mockWordSensesRepo.findOne.mockResolvedValue(null);
       await expect(service.findById(99)).rejects.toThrow(NotFoundException);
     });
