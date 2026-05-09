@@ -70,40 +70,47 @@ describe('AdminProgressService', () => {
 
   describe('getOverviewStats', () => {
     /**
-     * [TC-ADMIN-001] Kiểm tra chức năng tổng hợp dữ liệu thống kê tổng quan cho Dashboard Quản trị.
-     * Kịch bản xác nhận hệ thống tính toán đúng điểm trung bình, chuỗi học tập trung bình 
-     * và danh sách người dùng tiêu biểu dựa trên các truy vấn aggregation (AVG, COUNT).
+     * [TC-ADMIN-001] Tổng hợp dữ liệu thống kê tổng quan cho Dashboard Quản trị.
+     * Mục tiêu: Xác nhận hệ thống tính toán chính xác điểm trung bình, chuỗi học tập trung bình và top người dùng từ DB.
      */
     it('should return complete overview statistics for the admin dashboard (TC-ADMIN-001)', async () => {
+      // --- ARRANGE ---
       (userRepo.count as jest.Mock).mockResolvedValueOnce(100).mockResolvedValueOnce(80);
       (progressRepo.count as jest.Mock).mockResolvedValue(500);
       
       mockQueryBuilder.getRawOne
-        .mockResolvedValueOnce({ avg: '85.5' }) // Average score
-        .mockResolvedValueOnce({ avg: '5.2' });  // Average streak
+        .mockResolvedValueOnce({ avg: '85.5' }) // Giả lập điểm trung bình trả về từ SQL AVG()
+        .mockResolvedValueOnce({ avg: '5.2' });  // Giả lập chuỗi học tập trung bình
       
       mockQueryBuilder.getRawMany.mockResolvedValue([
         { userId: 1, displayName: 'Top User', metric: 10 }
       ]);
 
+      // --- ACT ---
       const result = await service.getOverviewStats();
 
+      // --- ASSERT ---
       expect(result.totalUsers).toBe(100);
       expect(result.averageScore).toBe(85.5);
       expect(result.topUsers).toHaveLength(1);
     });
 
     /**
-     * [TC-ADMIN-002] Kiểm tra khả năng xử lý an toàn của hệ thống khi cơ sở dữ liệu trống hoặc truy vấn trả về null.
-     * Đảm bảo các giá trị trung bình (score, streak) được trả về là 0 thay vì null để tránh lỗi hiển thị trên giao diện.
+     * [TC-ADMIN-002] Xử lý an toàn khi cơ sở dữ liệu chưa có dữ liệu (kết quả truy vấn null).
+     * Mục tiêu: Đảm bảo dashboard không bị lỗi hiển thị khi các hàm AVG() của SQL trả về null.
      */
     it('should return zero values when aggregation results are null or empty (TC-ADMIN-002)', async () => {
+      // --- ARRANGE ---
       (userRepo.count as jest.Mock).mockResolvedValue(0);
       (progressRepo.count as jest.Mock).mockResolvedValue(0);
       mockQueryBuilder.getRawOne.mockResolvedValue(null);
       mockQueryBuilder.getRawMany.mockResolvedValue([]);
 
+      // --- ACT ---
       const result = await service.getOverviewStats();
+
+      // --- ASSERT ---
+      // [CheckDB] Trả về 0 mặc định thay vì null.
       expect(result.averageScore).toBe(0);
       expect(result.averageStreak).toBe(0);
     });
@@ -111,108 +118,133 @@ describe('AdminProgressService', () => {
 
   describe('getUserProgressDetails', () => {
     /**
-     * [TC-ADMIN-003] Báo lỗi khi không tìm thấy user
+     * [TC-ADMIN-003] Lỗi khi truy xuất tiến độ của người dùng không tồn tại.
      */
     it('nên báo lỗi NotFoundException khi userId không tồn tại (TC-ADMIN-003)', async () => {
+      // --- ARRANGE ---
       (userRepo.findOne as jest.Mock).mockResolvedValue(null);
+
+      // --- ACT & ASSERT ---
       await expect(service.getUserProgressDetails(999)).rejects.toThrow(NotFoundException);
     });
 
     /**
-     * [TC-ADMIN-004] Lấy chi tiết tiến độ user thành công
+     * [TC-ADMIN-004] Truy xuất báo cáo chi tiết về tiến độ học tập của người dùng.
+     * Mục tiêu: Xác nhận việc tổng hợp thông tin bài học đã hoàn thành và phân tích tỷ lệ hoàn thành từng khóa học.
      */
     it('nên trả về báo cáo tiến độ chi tiết của người dùng (TC-ADMIN-004)', async () => {
+      // --- ARRANGE ---
       const mockUser = { id: 1, email: 'test@hmail.com', currentStreak: 5 };
       (userRepo.findOne as jest.Mock).mockResolvedValue(mockUser);
       
-      // Mock completed lessons
+      // Giả lập danh sách bài học đã hoàn thành.
       mockQueryBuilder.getMany.mockResolvedValueOnce([
         { lessonId: 10, scorePercentage: 90, completedAt: new Date(), lesson: { name: 'L1', courseId: 100, course: { title: 'C1' } } }
       ]);
 
-      // Mock courses breakdown
+      // Giả lập dữ liệu khóa học để phân tích (Course Breakdown).
       (courseRepo.find as jest.Mock).mockResolvedValue([{ id: 100, title: 'C1', isActive: true }]);
       (lessonRepo.find as jest.Mock).mockResolvedValue([{ id: 10, isActive: true }]);
       
-      // Mock progress in breakdown loop
+      // Giả lập điểm số trung bình trong vòng lặp phân tích.
       mockQueryBuilder.getMany.mockResolvedValueOnce([{ scorePercentage: 100 }]);
 
+      // --- ACT ---
       const result = await service.getUserProgressDetails(1);
       
+      // --- ASSERT ---
       expect(result.user.id).toBe(1);
+      // [CheckDB] Xác nhận tính toán đúng số lượng bài học hoàn thành trong khóa học.
       expect(result.courseBreakdown[0].completedLessons).toBe(1);
     });
 
     /**
-     * [TC-ADMIN-005] Xử lý trường hợp khóa học không có bài học nào
+     * [TC-ADMIN-005] Xử lý an toàn khi gặp khóa học không có bài học nào.
      */
     it('nên bỏ qua truy vấn tiến độ nếu khóa học không có bài học (TC-ADMIN-005)', async () => {
+      // --- ARRANGE ---
       (userRepo.findOne as jest.Mock).mockResolvedValue({ id: 1 });
-      mockQueryBuilder.getMany.mockResolvedValueOnce([]); // No completed lessons
+      mockQueryBuilder.getMany.mockResolvedValueOnce([]); // Người dùng chưa hoàn thành bài nào.
       (courseRepo.find as jest.Mock).mockResolvedValue([{ id: 2, title: 'C2', isActive: true }]);
-      (lessonRepo.find as jest.Mock).mockResolvedValue([]); // Empty course
+      (lessonRepo.find as jest.Mock).mockResolvedValue([]); // Khóa học rỗng.
 
+      // --- ACT ---
       const result = await service.getUserProgressDetails(1);
+
+      // --- ASSERT ---
       expect(result.courseBreakdown[0].totalLessons).toBe(0);
+      // [CheckDB] Đảm bảo không gọi QueryBuilder lọc theo mảng lessonIds rỗng (tránh lỗi SQL IN ()).
       expect(mockQueryBuilder.where).not.toHaveBeenCalledWith('progress.lessonId IN (:...lessonIds)', expect.any(Object));
     });
   });
 
   describe('getCourseAnalytics', () => {
     /**
-     * [TC-ADMIN-006] Phân tích khóa học thành công
+     * [TC-ADMIN-006] Phân tích hiệu quả và tỷ lệ hoàn thành của một khóa học.
+     * Mục tiêu: Xác nhận các chỉ số về số lượng học viên bắt đầu, hoàn thành và điểm số trung bình.
      */
     it('nên tính toán chính xác các chỉ số hoàn thành của khóa học (TC-ADMIN-006)', async () => {
+      // --- ARRANGE ---
       (courseRepo.findOne as jest.Mock).mockResolvedValue({ id: 1, title: 'C1' });
       (lessonRepo.find as jest.Mock).mockResolvedValue([{ id: 1 }, { id: 2 }]);
       
       mockQueryBuilder.getRawOne
-        .mockResolvedValueOnce({ count: '10' }) // Lần gọi 1: usersStarted
-        .mockResolvedValueOnce({ count: '2', avgScore: '80' }) // Lần gọi 2: lesson 1 stats
-        .mockResolvedValueOnce({ count: '1', avgScore: '90' }); // Lần gọi 3: lesson 2 stats
+        .mockResolvedValueOnce({ count: '10' }) // Lần 1: usersStarted
+        .mockResolvedValueOnce({ count: '2', avgScore: '80' }) // Lần 2: bài học 1
+        .mockResolvedValueOnce({ count: '1', avgScore: '90' }); // Lần 3: bài học 2
 
       mockQueryBuilder.getRawMany.mockResolvedValue([
-        { userId: 1, completed: '2' }, // Đã xong cả 2 bài
-        { userId: 2, completed: '1' }  // Mới xong 1 bài
+        { userId: 1, completed: '2' }, // Đã xong cả 2 bài -> 100%
+        { userId: 2, completed: '1' }  // Mới xong 1 bài -> 50%
       ]);
 
+      // --- ACT ---
       const result = await service.getCourseAnalytics(1);
       
+      // --- ASSERT ---
       expect(result.usersStarted).toBe(10);
-      expect(result.usersCompleted).toBe(1); // Chỉ user 1 hoàn thành 100%
-      expect(result.averageCompletionRate).toBe(15); // (3 bài hoàn thành / 20 bài tối đa) * 100
+      expect(result.usersCompleted).toBe(1);
+      // [CheckDB] Công thức: (Tổng bài hoàn thành / (Tổng user * Tổng bài học)) * 100
+      expect(result.averageCompletionRate).toBe(15);
     });
 
     /**
-     * [TC-ADMIN-007] Báo lỗi khi không thấy khóa học
+     * [TC-ADMIN-007] Lỗi khi phân tích khóa học không tồn tại.
      */
     it('nên báo lỗi NotFoundException (TC-ADMIN-007)', async () => {
+      // --- ARRANGE ---
       (courseRepo.findOne as jest.Mock).mockResolvedValue(null);
+
+      // --- ACT & ASSERT ---
       await expect(service.getCourseAnalytics(1)).rejects.toThrow(NotFoundException);
     });
   });
 
   describe('getLessonAnalytics', () => {
     /**
-     * [TC-ADMIN-008] Phân tích bài học và phân phối điểm số
+     * [TC-ADMIN-008] Phân tích phổ điểm và phân phối học lực của học viên trong một bài học.
      */
     it('nên trả về phân phối điểm số chính xác (TC-ADMIN-008)', async () => {
+      // --- ARRANGE ---
       (lessonRepo.findOne as jest.Mock).mockResolvedValue({ id: 1, name: 'L1', course: { title: 'C1' } });
       mockQueryBuilder.getRawOne.mockResolvedValue({ count: '3', avgScore: '50' });
       
-      // Mock 3 completions for range distribution
+      // Giả lập 3 học viên với các dải điểm khác nhau.
       (progressRepo.find as jest.Mock).mockResolvedValue([
-        { scorePercentage: 10 },  // 0-20
-        { scorePercentage: 55 },  // 41-60
-        { scorePercentage: 99 }   // 81-100
+        { scorePercentage: 10 },  // Thuộc dải 0-20
+        { scorePercentage: 55 },  // Thuộc dải 41-60
+        { scorePercentage: 99 }   // Thuộc dải 81-100
       ]);
       
       mockQueryBuilder.getMany.mockResolvedValue([
         { userId: 1, user: { displayName: 'U1' }, scorePercentage: 100, completedAt: new Date() }
       ]);
 
+      // --- ACT ---
       const result = await service.getLessonAnalytics(1);
 
+      // --- ASSERT ---
+      // [CheckDB] Xác nhận logic đếm số lượng học viên theo từng dải điểm (Score Distribution).
       expect(result.scoreDistribution[0].count).toBe(1);
       expect(result.scoreDistribution[2].count).toBe(1);
       expect(result.scoreDistribution[4].count).toBe(1);
@@ -220,27 +252,33 @@ describe('AdminProgressService', () => {
     });
 
     /**
-     * [TC-ADMIN-009] Báo lỗi khi không thấy bài học
+     * [TC-ADMIN-009] Lỗi khi phân tích bài học không tồn tại.
      */
     it('nên báo lỗi NotFoundException (TC-ADMIN-009)', async () => {
+      // --- ARRANGE ---
       (lessonRepo.findOne as jest.Mock).mockResolvedValue(null);
+
+      // --- ACT & ASSERT ---
       await expect(service.getLessonAnalytics(1)).rejects.toThrow(NotFoundException);
     });
 
     /**
-     * [TC-ADMIN-010] Kiểm tra logic phân loại điểm số cho các dải điểm ở giữa (21-40 và 61-80).
-     * Đảm bảo rằng hàm phân phối (distribution) ghi nhận đúng số lượng học viên cho mọi khoảng điểm quy định.
+     * [TC-ADMIN-010] Kiểm tra logic phân loại cho các dải điểm trung gian (21-40 và 61-80).
      */
     it('should correctly categorize scores into the 21-40 and 61-80 ranges (TC-ADMIN-010)', async () => {
+        // --- ARRANGE ---
         (lessonRepo.findOne as jest.Mock).mockResolvedValue({ id: 1, course: { title: '' } });
         mockQueryBuilder.getRawOne.mockResolvedValue({});
         (progressRepo.find as jest.Mock).mockResolvedValue([
-            { scorePercentage: 30 }, // 21-40
-            { scorePercentage: 70 }  // 61-80
+            { scorePercentage: 30 }, // Rơi vào dải 2 (21-40)
+            { scorePercentage: 70 }  // Rơi vào dải 4 (61-80)
         ]);
         mockQueryBuilder.getMany.mockResolvedValue([]);
 
+        // --- ACT ---
         const result = await service.getLessonAnalytics(1);
+
+        // --- ASSERT ---
         expect(result.scoreDistribution[1].count).toBe(1);
         expect(result.scoreDistribution[3].count).toBe(1);
     });

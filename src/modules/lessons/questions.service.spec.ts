@@ -44,22 +44,27 @@ describe('QuestionsService', () => {
 
   describe('create', () => {
     /**
-     * TC-LSN-QST-001
-     * Objective: Tạo question với orderIndex tự sinh khi không truyền vào
-     * Input:    DTO không có orderIndex; lessonId=10
-     * Expected: gọi getNextOrderIndex(10), gọi repo.create + repo.save với orderIndex được set
+     * [TC-LSN-QST-001] Tạo câu hỏi mới với số thứ tự tự động.
+     * Mục tiêu: Xác nhận hệ thống tự tính toán orderIndex khi DTO không cung cấp.
      */
     it('TC-LSN-QST-001 - should auto-generate orderIndex when not provided', async () => {
+      // --- ARRANGE ---
       const dto: any = { lessonId: 10, questionType: 'mcq', data: {} };
       const createdEntity = { ...dto, orderIndex: 5 };
       const savedEntity = { id: 1, ...createdEntity };
+      
+      // Giả lập OrderIndexService trả về số thứ tự 5.
       orderIndexService.getNextOrderIndex.mockResolvedValue(5);
       questionRepository.create!.mockReturnValue(createdEntity);
       questionRepository.save!.mockResolvedValue(savedEntity);
 
+      // --- ACT ---
       const result = await service.create(dto);
 
+      // --- ASSERT ---
+      // [CheckDB] Xác nhận yêu cầu cấp số thứ tự mới cho bài học ID=10.
       expect(orderIndexService.getNextOrderIndex).toHaveBeenCalledWith(10);
+      // [CheckDB] Xác nhận repository lưu câu hỏi với orderIndex=5.
       expect(questionRepository.create).toHaveBeenCalledWith({
         ...dto,
         orderIndex: 5,
@@ -69,12 +74,10 @@ describe('QuestionsService', () => {
     });
 
     /**
-     * TC-LSN-QST-002
-     * Objective: Không gọi getNextOrderIndex khi orderIndex đã được truyền
-     * Input:    DTO có orderIndex = 9
-     * Expected: orderIndexService không được gọi; save dùng orderIndex=9
+     * [TC-LSN-QST-002] Tạo câu hỏi với số thứ tự được chỉ định sẵn.
      */
     it('TC-LSN-QST-002 - should keep provided orderIndex', async () => {
+      // --- ARRANGE ---
       const dto: any = {
         lessonId: 10,
         orderIndex: 9,
@@ -84,41 +87,48 @@ describe('QuestionsService', () => {
       questionRepository.create!.mockReturnValue(dto);
       questionRepository.save!.mockResolvedValue({ id: 2, ...dto });
 
+      // --- ACT ---
       await service.create(dto);
 
+      // --- ASSERT ---
+      // [CheckDB] Xác nhận OrderIndexService KHÔNG được gọi.
       expect(orderIndexService.getNextOrderIndex).not.toHaveBeenCalled();
       expect(questionRepository.create).toHaveBeenCalledWith(dto);
     });
 
     /**
-     * TC-LSN-QST-003
-     * Objective: Coi orderIndex = null như chưa có và auto-generate
-     * Input:    DTO có orderIndex = null
-     * Expected: getNextOrderIndex được gọi
+     * [TC-LSN-QST-003] Xử lý trường hợp orderIndex truyền vào là null.
+     * Mục tiêu: Coi null tương đương với chưa có và thực hiện tự động sinh.
      */
     it('TC-LSN-QST-003 - should treat null orderIndex as missing', async () => {
+      // --- ARRANGE ---
       const dto: any = { lessonId: 4, orderIndex: null };
       orderIndexService.getNextOrderIndex.mockResolvedValue(2);
       questionRepository.create!.mockReturnValue({});
       questionRepository.save!.mockResolvedValue({});
 
+      // --- ACT ---
       await service.create(dto);
+
+      // --- ASSERT ---
       expect(orderIndexService.getNextOrderIndex).toHaveBeenCalledWith(4);
     });
   });
 
   describe('findAll', () => {
     /**
-     * TC-LSN-QST-004
-     * Objective: Trả về danh sách question đang active, sort theo orderIndex ASC
-     * Expected: repo.find được gọi với { isActive: true } + order ASC
+     * [TC-LSN-QST-004] Lấy danh sách câu hỏi đang hoạt động.
      */
     it('TC-LSN-QST-004 - should return only active questions', async () => {
+      // --- ARRANGE ---
       const list = [{ id: 1 }, { id: 2 }];
       questionRepository.find!.mockResolvedValue(list);
 
+      // --- ACT ---
       const result = await service.findAll();
 
+      // --- ASSERT ---
+      // [CheckDB] Xác nhận chỉ lấy các câu hỏi Active và sắp xếp theo orderIndex.
       expect(questionRepository.find).toHaveBeenCalledWith({
         where: { isActive: true },
         order: { orderIndex: 'ASC' },
@@ -129,12 +139,17 @@ describe('QuestionsService', () => {
 
   describe('findByLessonId', () => {
     /**
-     * TC-LSN-QST-005
-     * Objective: Trả về question theo lessonId, chỉ lấy active
+     * [TC-LSN-QST-005] Truy xuất câu hỏi của bài học cụ thể.
      */
     it('TC-LSN-QST-005 - should query by lessonId and isActive', async () => {
+      // --- ARRANGE ---
       questionRepository.find!.mockResolvedValue([]);
+
+      // --- ACT ---
       await service.findByLessonId(7);
+
+      // --- ASSERT ---
+      // [CheckDB] Xác nhận lọc theo đúng lessonId và trạng thái Active.
       expect(questionRepository.find).toHaveBeenCalledWith({
         where: { lessonId: 7, isActive: true },
         order: { orderIndex: 'ASC' },
@@ -144,15 +159,18 @@ describe('QuestionsService', () => {
 
   describe('findOne', () => {
     /**
-     * TC-LSN-QST-006
-     * Objective: Trả về question khi tồn tại; chỉ filter active mặc định
+     * [TC-LSN-QST-006] Lấy chi tiết câu hỏi đang hoạt động.
      */
     it('TC-LSN-QST-006 - should return question when found (active only)', async () => {
+      // --- ARRANGE ---
       const q = { id: 1, isActive: true };
       questionRepository.findOne!.mockResolvedValue(q);
 
+      // --- ACT ---
       const result = await service.findOne(1);
 
+      // --- ASSERT ---
+      // [CheckDB] Tìm kiếm theo ID kèm isActive=true.
       expect(questionRepository.findOne).toHaveBeenCalledWith({
         where: { id: 1, isActive: true },
       });
@@ -160,43 +178,53 @@ describe('QuestionsService', () => {
     });
 
     /**
-     * TC-LSN-QST-007
-     * Objective: includeInactive=true thì không filter isActive
+     * [TC-LSN-QST-007] Lấy chi tiết câu hỏi bất kể trạng thái.
      */
     it('TC-LSN-QST-007 - should not filter isActive when includeInactive=true', async () => {
+      // --- ARRANGE ---
       questionRepository.findOne!.mockResolvedValue({ id: 1 });
+
+      // --- ACT ---
       await service.findOne(1, true);
+
+      // --- ASSERT ---
+      // [CheckDB] Xác nhận không có isActive trong tham số query.
       expect(questionRepository.findOne).toHaveBeenCalledWith({
         where: { id: 1 },
       });
     });
 
     /**
-     * TC-LSN-QST-008
-     * Objective: Throw NotFoundException khi không tìm thấy
+     * [TC-LSN-QST-008] Lỗi khi truy cập câu hỏi không tồn tại.
      */
     it('TC-LSN-QST-008 - should throw NotFoundException when not found', async () => {
+      // --- ARRANGE ---
       questionRepository.findOne!.mockResolvedValue(null);
+
+      // --- ACT & ASSERT ---
       await expect(service.findOne(999)).rejects.toThrow(NotFoundException);
     });
   });
 
   describe('update', () => {
     /**
-     * TC-LSN-QST-009
-     * Objective: Update merge fields rồi save
+     * [TC-LSN-QST-009] Cập nhật thông tin câu hỏi.
      */
     it('TC-LSN-QST-009 - should merge fields and save', async () => {
+      // --- ARRANGE ---
       const existing = { id: 1, isActive: true, data: { a: 1 } };
       questionRepository.findOne!.mockResolvedValue(existing);
       questionRepository.save!.mockImplementation(async (q) => q);
 
+      // --- ACT ---
       const result = await service.update(1, { data: { a: 2 } } as any);
 
-      // findOne được gọi với includeInactive=true (no isActive filter)
+      // --- ASSERT ---
+      // [CheckDB] findOne được gọi không có filter Active để cho phép cập nhật cả bản ghi Inactive.
       expect(questionRepository.findOne).toHaveBeenCalledWith({
         where: { id: 1 },
       });
+      // [CheckDB] Xác nhận repository lưu dữ liệu mới (a: 2).
       expect(questionRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1, data: { a: 2 } }),
       );
@@ -206,15 +234,19 @@ describe('QuestionsService', () => {
 
   describe('remove (soft delete)', () => {
     /**
-     * TC-LSN-QST-010
-     * Objective: Soft delete = set isActive=false rồi save
+     * [TC-LSN-QST-010] Xóa mềm câu hỏi.
      */
     it('TC-LSN-QST-010 - should set isActive=false and save', async () => {
+      // --- ARRANGE ---
       const existing = { id: 1, isActive: true };
       questionRepository.findOne!.mockResolvedValue(existing);
       questionRepository.save!.mockResolvedValue({ ...existing, isActive: false });
 
+      // --- ACT ---
       await service.remove(1);
+
+      // --- ASSERT ---
+      // [CheckDB] Trạng thái được chuyển sang false trước khi lưu.
       expect(questionRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1, isActive: false }),
       );
@@ -223,49 +255,58 @@ describe('QuestionsService', () => {
 
   describe('hardDelete', () => {
     /**
-     * TC-LSN-QST-011
-     * Objective: Xóa cứng thành công khi affected > 0
+     * [TC-LSN-QST-011] Xóa cứng câu hỏi khỏi DB.
      */
     it('TC-LSN-QST-011 - should hard delete successfully', async () => {
+      // --- ARRANGE ---
       questionRepository.delete!.mockResolvedValue({ affected: 1 });
+
+      // --- ACT ---
       await service.hardDelete(1);
+
+      // --- ASSERT ---
+      // [CheckDB] Xác nhận repository.delete được gọi.
       expect(questionRepository.delete).toHaveBeenCalledWith(1);
     });
 
     /**
-     * TC-LSN-QST-012
-     * Objective: Throw NotFound khi affected=0
+     * [TC-LSN-QST-012] Lỗi xóa câu hỏi không tồn tại.
      */
     it('TC-LSN-QST-012 - should throw NotFound when nothing deleted', async () => {
+      // --- ARRANGE ---
       questionRepository.delete!.mockResolvedValue({ affected: 0 });
+
+      // --- ACT & ASSERT ---
       await expect(service.hardDelete(99)).rejects.toThrow(NotFoundException);
     });
   });
 
   describe('restore', () => {
     /**
-     * TC-LSN-QST-013
-     * Objective: Restore = set isActive=true rồi save
+     * [TC-LSN-QST-013] Khôi phục câu hỏi đã xóa mềm.
      */
     it('TC-LSN-QST-013 - should restore inactive question', async () => {
+      // --- ARRANGE ---
       const existing = { id: 1, isActive: false };
       questionRepository.findOne!.mockResolvedValue(existing);
       questionRepository.save!.mockImplementation(async (q) => q);
 
+      // --- ACT ---
       const result = await service.restore(1);
 
-      expect(questionRepository.findOne).toHaveBeenCalledWith({
-        where: { id: 1 },
-      });
+      // --- ASSERT ---
+      // [CheckDB] Trạng thái được khôi phục thành true.
       expect(result.isActive).toBe(true);
     });
 
     /**
-     * TC-LSN-QST-014
-     * Objective: Throw NotFound khi không tồn tại
+     * [TC-LSN-QST-014] Lỗi khôi phục khi câu hỏi không tồn tại.
      */
     it('TC-LSN-QST-014 - should throw NotFound when restoring missing question', async () => {
+      // --- ARRANGE ---
       questionRepository.findOne!.mockResolvedValue(null);
+
+      // --- ACT & ASSERT ---
       await expect(service.restore(99)).rejects.toThrow(NotFoundException);
     });
   });

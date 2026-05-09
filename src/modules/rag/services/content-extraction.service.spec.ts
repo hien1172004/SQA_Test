@@ -636,4 +636,153 @@ describe('ContentExtractionService', () => {
       (global.setTimeout as any).mockRestore?.();
     });
   });
+
+  describe('extractTextFromData - edge cases', () => {
+    /**
+     * TC-RAG-CEX-025
+     * Objective: data rỗng hoặc không phải object → trả về '' (line 205/267)
+     */
+    it('TC-RAG-CEX-025 - should return empty for non-object data', async () => {
+      contentRepository.find!.mockResolvedValue([
+        { id: 1, lessonId: 1, type: 'text', data: 'not-an-object' as any, isActive: true },
+      ]);
+      const result = await service.extractLessonContent();
+      expect(result).toHaveLength(0);
+    });
+
+    /**
+     * TC-RAG-CEX-026
+     * Objective: Trích xuất các trường nội dung đặc thù: content, explanation, description
+     */
+    it('TC-RAG-CEX-026 - should extract specific content fields', async () => {
+      contentRepository.find!.mockResolvedValue([
+        {
+          id: 1,
+          lessonId: 1,
+          type: 'text',
+          data: { content: 'C', explanation: 'E', description: 'D' },
+          isActive: true,
+        },
+      ]);
+      const result = await service.extractLessonContent();
+      expect(result[0].text).toContain('C');
+      expect(result[0].text).toContain('Explanation: E');
+      expect(result[0].text).toContain('Description: D');
+    });
+
+    /**
+     * TC-RAG-CEX-027
+     * Objective: extractTextFromTextContent với legacy string input (line 251)
+     */
+    it('TC-RAG-CEX-027 - should handle legacy string in TextContent extract', async () => {
+      questionRepository.find!.mockResolvedValue([
+        {
+          id: 1,
+          lessonId: 1,
+          questionType: 'question_selection_text_text',
+          data: { questionContent: 'Legacy' }, // line 251
+          isActive: true,
+        },
+      ]);
+      const result = await service.extractQuestionContent();
+      expect(result[0].text).toContain('Legacy');
+    });
+
+    /**
+     * TC-RAG-CEX-028
+     * Objective: Matching pairs legacy format: question/answer thay vì left/right (line 366-367)
+     */
+    it('TC-RAG-CEX-028 - should handle matching pairs legacy format', async () => {
+      questionRepository.find!.mockResolvedValue([
+        {
+          id: 1,
+          lessonId: 1,
+          questionType: 'question_matching_text_text',
+          data: { pairs: [{ question: 'Q', answer: 'A' }] },
+          isActive: true,
+        },
+      ]);
+      const result = await service.extractQuestionContent();
+      expect(result[0].text).toMatch(/Q matches A/);
+    });
+
+    /**
+     * TC-RAG-CEX-029
+     * Objective: Question data có prompt, instruction, text (line 281-283)
+     */
+    it('TC-RAG-CEX-029 - should extract prompt, instruction and text from questions', async () => {
+      questionRepository.find!.mockResolvedValue([
+        {
+          id: 1,
+          lessonId: 1,
+          questionType: 'question_selection_text_text',
+          data: { prompt: 'P', instruction: 'I', text: 'T' },
+          isActive: true,
+        },
+      ]);
+      const result = await service.extractQuestionContent();
+      expect(result[0].text).toContain('Prompt: P');
+      expect(result[0].text).toContain('Instruction: I');
+      expect(result[0].text).toContain('T.');
+    });
+
+    /**
+     * TC-RAG-CEX-030
+     * Objective: Phủ toàn bộ các nhánh còn lại của toán tử || (chinese, english, content, left, right)
+     */
+    it('TC-RAG-CEX-030 - should cover all alternative field branches', async () => {
+      // --- ARRANGE ---
+      contentRepository.find!.mockResolvedValue([
+        {
+          id: 1,
+          lessonId: 1,
+          type: 'mixed',
+          data: {
+            // Kiểm tra trường hợp hội thoại (dialog) có trường content và trường rỗng.
+            dialog: [
+              { speaker: 'A', content: 'C' }, 
+              { speaker: '', text: '' }
+            ],
+            // Kiểm tra trường hợp từ vựng (vocabulary) dùng chinese/english và trường rỗng.
+            vocabulary: [
+              { chinese: 'C', english: 'E' },
+              { word: '', meaning: '' }
+            ],
+            // Kiểm tra trường hợp ví dụ (examples) dùng text/translation và trường rỗng.
+            examples: [
+              { text: 'T', translation: 'Tr' },
+              { chinese: '', english: '' }
+            ],
+          },
+          isActive: true,
+        },
+      ]);
+      questionRepository.find!.mockResolvedValue([
+        {
+          id: 1,
+          lessonId: 1,
+          questionType: 'question_matching_text_text',
+          data: {
+            questionContent: { chinese: ['你'] },
+            // Kiểm tra trường hợp câu hỏi nối cặp (pairs) dùng question/answer và trường rỗng.
+            pairs: [
+              { left: 'L', right: 'R' },
+              { question: '', answer: '' }
+            ],
+            blanks: [{ correct: ['A'] }],
+          },
+          isActive: true,
+        },
+      ]);
+
+      // --- ACT ---
+      const res1 = await service.extractLessonContent();
+      const res2 = await service.extractQuestionContent();
+
+      // --- ASSERT ---
+      // Xác nhận logic trích xuất hoạt động đúng với cả dữ liệu đầy đủ và dữ liệu rỗng.
+      expect(res1[0].text).toContain('C');
+      expect(res2[0].text).toContain('L matches R');
+    });
+  });
 });

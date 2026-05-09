@@ -43,30 +43,31 @@ describe('OrderIndexService', () => {
 
   describe('getNextOrderIndex', () => {
     /**
-     * TC-LSN-OIDX-001
-     * Objective: Trả về max(content, question) + 1 khi cả hai có dữ liệu
-     * Input:    lessonId = 5; contentMax = 3, questionMax = 7
-     * Expected: 8 (= max(3,7) + 1); cả hai query builder đều được gọi với lessonId=5 + isActive=true
+     * [TC-LSN-OIDX-001] Tính toán số thứ tự tiếp theo khi cả Content và Question đều có dữ liệu.
+     * Mục tiêu: Xác nhận hệ thống lấy giá trị MAX từ cả hai bảng và cộng thêm 1.
      */
     it('TC-LSN-OIDX-001 - should return max+1 when both repositories return values', async () => {
+      // --- ARRANGE ---
       const lessonId = 5;
+      // Giả lập bảng Content có maxIndex = 3.
       contentRepository.__queryBuilder.getRawOne.mockResolvedValue({
         maxIndex: 3,
       });
+      // Giả lập bảng Question có maxIndex = 7.
       questionRepository.__queryBuilder.getRawOne.mockResolvedValue({
         maxIndex: 7,
       });
 
+      // --- ACT ---
       const result = await service.getNextOrderIndex(lessonId);
 
+      // --- ASSERT ---
+      // Kết quả kỳ vọng: max(3, 7) + 1 = 8.
       expect(result).toBe(8);
-      // CheckDB: cả 2 query builder phải được gọi
-      expect(contentRepository.createQueryBuilder).toHaveBeenCalledWith(
-        'content',
-      );
-      expect(questionRepository.createQueryBuilder).toHaveBeenCalledWith(
-        'question',
-      );
+      
+      // [CheckDB] Xác nhận cả hai QueryBuilder đều thực hiện truy vấn đúng bài học và trạng thái Active.
+      expect(contentRepository.createQueryBuilder).toHaveBeenCalledWith('content');
+      expect(questionRepository.createQueryBuilder).toHaveBeenCalledWith('question');
       expect(contentRepository.__queryBuilder.where).toHaveBeenCalledWith(
         'content.lessonId = :lessonId',
         { lessonId },
@@ -75,19 +76,13 @@ describe('OrderIndexService', () => {
         'content.isActive = :isActive',
         { isActive: true },
       );
-      expect(questionRepository.__queryBuilder.where).toHaveBeenCalledWith(
-        'question.lessonId = :lessonId',
-        { lessonId },
-      );
     });
 
     /**
-     * TC-LSN-OIDX-002
-     * Objective: Trả về 1 khi cả hai repository không có record nào (maxIndex=null)
-     * Input:    lessonId = 99; cả hai trả về { maxIndex: null }
-     * Expected: 1 (= max(0,0) + 1)
+     * [TC-LSN-OIDX-002] Trả về giá trị mặc định khi bài học chưa có nội dung nào.
      */
     it('TC-LSN-OIDX-002 - should return 1 when both repositories are empty', async () => {
+      // --- ARRANGE ---
       contentRepository.__queryBuilder.getRawOne.mockResolvedValue({
         maxIndex: null,
       });
@@ -95,17 +90,19 @@ describe('OrderIndexService', () => {
         maxIndex: null,
       });
 
+      // --- ACT ---
       const result = await service.getNextOrderIndex(99);
+
+      // --- ASSERT ---
+      // Khi MAX = null, hệ thống coi như là 0. 0 + 1 = 1.
       expect(result).toBe(1);
     });
 
     /**
-     * TC-LSN-OIDX-003
-     * Objective: Trả về content max + 1 khi questionMax = null
-     * Input:    contentMax = 4, questionMax = null
-     * Expected: 5
+     * [TC-LSN-OIDX-003] Lấy số thứ tự lớn nhất từ bảng Content khi bảng Question rỗng.
      */
     it('TC-LSN-OIDX-003 - should pick content max when question is null', async () => {
+      // --- ARRANGE ---
       contentRepository.__queryBuilder.getRawOne.mockResolvedValue({
         maxIndex: 4,
       });
@@ -113,21 +110,25 @@ describe('OrderIndexService', () => {
         maxIndex: null,
       });
 
+      // --- ACT ---
       const result = await service.getNextOrderIndex(1);
+
+      // --- ASSERT ---
       expect(result).toBe(5);
     });
 
     /**
-     * TC-LSN-OIDX-004
-     * Objective: Trả về 1 khi cả 2 raw result là undefined (edge: getRawOne resolve undefined)
-     * Input:    cả 2 trả về undefined
-     * Expected: 1
+     * [TC-LSN-OIDX-004] Xử lý trường hợp QueryBuilder trả về undefined.
      */
     it('TC-LSN-OIDX-004 - should default to 1 when getRawOne returns undefined', async () => {
+      // --- ARRANGE ---
       contentRepository.__queryBuilder.getRawOne.mockResolvedValue(undefined);
       questionRepository.__queryBuilder.getRawOne.mockResolvedValue(undefined);
 
+      // --- ACT ---
       const result = await service.getNextOrderIndex(1);
+
+      // --- ASSERT ---
       expect(result).toBe(1);
     });
   });

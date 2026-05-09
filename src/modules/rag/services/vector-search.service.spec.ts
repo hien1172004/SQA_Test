@@ -296,8 +296,7 @@ describe('VectorSearchService', () => {
 
     /**
      * TC-RAG-VSR-013
-     * Objective: findSimilarContent: dùng default minSimilarity=0.5 và limit=10
-     *            khi options không truyền → cover branch || default
+     * Objective: Kiểm tra việc sử dụng các ngưỡng tương đồng và giới hạn mặc định khi không có tham số tùy chọn.
      */
     it('TC-RAG-VSR-013 - should use default minSimilarity and limit', async () => {
       embeddingRepository.findOne!.mockResolvedValue({
@@ -327,6 +326,18 @@ describe('VectorSearchService', () => {
       await expect(service.getEmbeddingStats()).rejects.toThrow(
         /Failed to get embedding stats/,
       );
+    });
+
+    /**
+     * TC-RAG-VSR-016
+     * Objective: Kiểm tra việc gọi hàm tìm kiếm theo loại nguồn dữ liệu khi không truyền tham số tùy chọn.
+     */
+    it('TC-RAG-VSR-016 - should call searchBySourceType without options', async () => {
+      const spy = jest.spyOn(service, 'searchSimilar').mockResolvedValue([]);
+      await service.searchBySourceType('q', SourceType.WORD); // No second arg
+      expect(spy).toHaveBeenCalledWith('q', {
+        sourceTypes: [SourceType.WORD],
+      });
     });
   });
 });

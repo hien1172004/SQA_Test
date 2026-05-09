@@ -5,13 +5,11 @@ import { Word } from './entities/word.entity';
 import { WordSense } from './entities/word-sense.entity';
 import { WordSenseTranslation } from './entities/word-sense-translation.entity';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { Repository } from 'typeorm';
 
 describe('WordsService', () => {
   let service: WordsService;
-  let wordRepo: Repository<Word>;
-  let senseRepo: Repository<WordSense>;
-  let translationRepo: Repository<WordSenseTranslation>;
+  let wordRepository: Repository<Word>;
 
   const mockQueryBuilder = {
     andWhere: jest.fn().mockReturnThis(),
@@ -69,249 +67,386 @@ describe('WordsService', () => {
     }).compile();
 
     service = module.get<WordsService>(WordsService);
-    wordRepo = module.get<Repository<Word>>(getRepositoryToken(Word));
-    senseRepo = module.get<Repository<WordSense>>(getRepositoryToken(WordSense));
-    translationRepo = module.get<Repository<WordSenseTranslation>>(
-      getRepositoryToken(WordSenseTranslation),
-    );
+    wordRepository = module.get<Repository<Word>>(getRepositoryToken(Word));
   });
 
   afterEach(() => {
+    // --- ROLLBACK ---
+    // Xóa bỏ tất cả các bản ghi cuộc gọi của Mock để tránh ảnh hưởng chéo giữa các test case.
     jest.clearAllMocks();
   });
 
   describe('create', () => {
     /**
-     * [TC-WORD-001] Kiểm tra chức năng khởi tạo một từ vựng mới trong hệ thống.
-     * Kịch bản này xác nhận rằng khi dữ liệu đầu vào hợp lệ, service sẽ gọi repository để lưu trữ 
-     * và trả về đối tượng từ vựng đã được gán ID thành công.
+     * [TC-WORD-001] Khởi tạo một từ vựng mới.
+     * Mục tiêu: Xác nhận hệ thống lưu trữ thành công từ vựng khi dữ liệu đầu vào hợp lệ.
      */
     it('should create and save a new word successfully (TC-WORD-001)', async () => {
+      // --- ARRANGE ---
+      // Input: DTO chứa thông tin chữ Hán và phiên âm.
       const dto = { simplified: '测试', traditional: '測試', pinyin: 'cèshì' };
+      // Kết quả giả lập sau khi lưu thành công (có thêm ID).
       const savedWord = { id: 1, ...dto };
+
+      // TypeORM: create() khởi tạo entity trong memory.
       mockWordRepo.create.mockReturnValue(dto);
+      // TypeORM: save() thực hiện INSERT vào cơ sở dữ liệu.
       mockWordRepo.save.mockResolvedValue(savedWord);
 
+      // --- ACT ---
       const result = await service.create(dto);
 
+      // --- ASSERT ---
+      // Xác nhận output trả về đúng đối tượng đã lưu.
       expect(result).toEqual(savedWord);
+      // [CheckDB] Đảm bảo repo.create được gọi để ánh xạ DTO.
       expect(mockWordRepo.create).toHaveBeenCalledWith(dto);
-      expect(mockWordRepo.save).toHaveBeenCalled(); // CheckDB
+      // [CheckDB] Đảm bảo repo.save được gọi để ghi xuống DB.
+      expect(mockWordRepo.save).toHaveBeenCalled();
     });
   });
 
   describe('findAll', () => {
     /**
-     * [TC-WORD-002] Kiểm tra chức năng tìm kiếm và phân trang từ vựng.
-     * Xác nhận rằng khi truyền từ khóa tìm kiếm và các tham số phân trang, 
-     * hệ thống trả về đúng danh sách dữ liệu, tổng số bản ghi và tính toán số trang chính xác.
+     * [TC-WORD-002] Tìm kiếm và phân trang từ vựng.
+     * Mục tiêu: Xác nhận hệ thống trả về danh sách dữ liệu và tổng trang chính xác.
      */
     it('should return paginated words with search filters successfully (TC-WORD-002)', async () => {
+      // --- ARRANGE ---
+      // Input: Tìm kiếm 'test' ở trang 2, giới hạn 5 bản ghi.
       const query = { search: 'test', page: 2, limit: 5 };
       const words = [{ id: 1, simplified: 'test' }];
+      
+      // Giả lập DB có tổng cộng 11 bản ghi khớp với điều kiện.
       mockQueryBuilder.getManyAndCount.mockResolvedValue([words, 11]);
 
+      // --- ACT ---
       const result = await service.findAll(query);
 
+      // --- ASSERT ---
       expect(result.words).toEqual(words);
       expect(result.total).toBe(11);
       expect(result.page).toBe(2);
+      // Logic: Math.ceil(11 / 5) = 3 trang.
       expect(result.totalPages).toBe(3);
+
+      // [CheckDB] Xác nhận SQL query sử dụng filter LIKE đúng cách.
       expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
         expect.stringContaining('word.simplified'),
         { search: '%test%' },
-      ); // CheckDB
+      );
     });
 
     /**
-     * [TC-WORD-003] Kiểm tra tính năng phân trang mặc định của hệ thống.
-     * Đảm bảo rằng khi người dùng không truyền tham số phân trang, 
-     * hệ thống sẽ tự động áp dụng các giá trị mặc định (trang 1, giới hạn 10 bản ghi).
+     * [TC-WORD-003] Phân trang mặc định.
+     * Mục tiêu: Đảm bảo trang 1 và limit 10 khi người dùng không truyền tham số.
      */
     it('should return words using default pagination parameters when none provided (TC-WORD-003)', async () => {
+      // --- ARRANGE ---
       mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      // --- ACT ---
       await service.findAll({});
+
+      // --- ASSERT ---
+      // skip = (1-1)*10 = 0.
       expect(mockQueryBuilder.skip).toHaveBeenCalledWith(0);
+      // take = 10 (mặc định).
       expect(mockQueryBuilder.take).toHaveBeenCalledWith(10);
+    });
+
+    /**
+     * [TC-WORD-003B] DB không có dữ liệu khớp.
+     * Mục tiêu: Trả về mảng rỗng thay vì lỗi.
+     */
+    it('should return total=0 and empty list when no words match (TC-WORD-003B)', async () => {
+      // --- ARRANGE ---
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      // --- ACT ---
+      const result = await service.findAll({ search: 'none' });
+
+      // --- ASSERT ---
+      expect(result.total).toBe(0);
+      expect(result.words).toEqual([]);
+      expect(result.totalPages).toBe(0);
+    });
+
+    /**
+     * [TC-WORD-003C] Không truyền search filter.
+     * Mục tiêu: Hệ thống không được gọi lệnh andWhere vào DB.
+     */
+    it('should not apply search filter if search is missing (TC-WORD-003C)', async () => {
+      // --- ARRANGE ---
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      // --- ACT ---
+      await service.findAll({});
+
+      // --- ASSERT ---
+      expect(mockQueryBuilder.andWhere).not.toHaveBeenCalled();
     });
   });
 
   describe('findById', () => {
     /**
-     * [TC-WORD-004] Kiểm tra chức năng tìm kiếm từ vựng theo mã định danh (ID) duy nhất.
-     * Đảm bảo hệ thống trả về đúng dữ liệu khi ID tồn tại trong cơ sở dữ liệu.
+     * [TC-WORD-004] Truy vấn theo ID.
+     * Mục tiêu: Đảm bảo lấy đủ thông tin từ vựng kèm quan hệ.
      */
     it('should return a word object when a valid ID is provided (TC-WORD-004)', async () => {
+      // --- ARRANGE ---
       const word = { id: 1, simplified: 'test' };
       mockQueryBuilder.getOne.mockResolvedValue(word);
 
+      // --- ACT ---
       const result = await service.findById(1);
 
+      // --- ASSERT ---
       expect(result).toEqual(word);
+      // [CheckDB] Kiểm tra filter đúng ID.
       expect(mockQueryBuilder.where).toHaveBeenCalledWith('word.id = :id', { id: 1 });
     });
 
     /**
-     * [TC-WORD-005] Kiểm tra xử lý ngoại lệ khi tra cứu từ vựng bằng ID không tồn tại.
-     * Hệ thống phải ném ra lỗi NotFoundException để thông báo cho người dùng/API Client.
+     * [TC-WORD-005] Xử lý ID không tồn tại.
+     * Mục tiêu: Ném NotFoundException.
      */
     it('should throw NotFoundException when the provided ID does not exist (TC-WORD-005)', async () => {
+      // --- ARRANGE ---
       mockQueryBuilder.getOne.mockResolvedValue(null);
+
+      // --- ACT & ASSERT ---
       await expect(service.findById(99)).rejects.toThrow(NotFoundException);
     });
   });
 
   describe('findBySimplified', () => {
     /**
-     * [TC-WORD-006] Truy vấn thông tin từ vựng dựa trên chữ Hán rút gọn (Simplified Chinese).
-     * Kỳ vọng hệ thống trả về đúng thực thể từ vựng tương ứng khi tìm thấy trong cơ sở dữ liệu.
+     * [TC-WORD-006] Truy vấn theo chữ Hán rút gọn.
+     * Mục tiêu: Xác nhận hệ thống tìm kiếm theo thuộc tính text.
      */
-    it('should return a word object when matching the simplified form (TC-WORD-006)', async () => {
+    it('should return a word when matching simplified form (TC-WORD-006)', async () => {
+      // --- ARRANGE ---
       const word = { id: 1, simplified: 'test' };
       mockQueryBuilder.getOne.mockResolvedValue(word);
 
+      // --- ACT ---
       const result = await service.findBySimplified('test');
 
+      // --- ASSERT ---
       expect(result).toEqual(word);
+      // [CheckDB] Xác nhận query filter simplified.
       expect(mockQueryBuilder.where).toHaveBeenCalledWith('word.simplified = :simplified', {
         simplified: 'test',
       });
     });
 
     /**
-     * [TC-WORD-007] Kiểm tra xử lý khi tra cứu một chữ Hán không tồn tại trong hệ thống.
-     * Hệ thống phải ném ra lỗi NotFoundException để bảo vệ tính nhất quán của dữ liệu.
+     * [TC-WORD-007] Chữ Hán không tồn tại.
      */
-    it('should throw NotFoundException if the simplified form is not found (TC-WORD-007)', async () => {
+    it('should throw NotFoundException if simplified form is not found (TC-WORD-007)', async () => {
+      // --- ARRANGE ---
       mockQueryBuilder.getOne.mockResolvedValue(null);
+
+      // --- ACT & ASSERT ---
       await expect(service.findBySimplified('none')).rejects.toThrow(NotFoundException);
     });
   });
 
   describe('update', () => {
     /**
-     * [TC-WORD-008] Kiểm tra chức năng cập nhật thông tin cho một từ vựng đã tồn tại.
-     * Xác nhận rằng dữ liệu mới được ánh xạ đúng và hệ thống thực hiện lưu thay đổi vào repository.
+     * [TC-WORD-008] Cập nhật thông tin từ vựng.
+     * Mục tiêu: Xác nhận dữ liệu được lưu thay đổi thành công.
      */
-    it('should update and save the word changes successfully (TC-WORD-008)', async () => {
+    it('should update and save word changes successfully (TC-WORD-008)', async () => {
+      // --- ARRANGE ---
       const word = { id: 1, simplified: 'old' };
       const dto = { simplified: 'new' };
       mockQueryBuilder.getOne.mockResolvedValue(word);
-      mockWordRepo.findOne.mockResolvedValue(null); // No conflict
+      mockWordRepo.findOne.mockResolvedValue(null);
       mockWordRepo.save.mockImplementation((w) => Promise.resolve(w));
 
+      // --- ACT ---
       const result = await service.update(1, dto);
 
+      // --- ASSERT ---
       expect(result.simplified).toBe('new');
-      expect(mockWordRepo.save).toHaveBeenCalled(); // CheckDB
+      // [CheckDB] Đảm bảo repo.save được gọi để cập nhật.
+      expect(mockWordRepo.save).toHaveBeenCalled();
     });
 
     /**
-     * [TC-WORD-009] Kiểm tra logic cập nhật khi người dùng giữ nguyên nội dung chữ Hán (Simplified).
-     * Hệ thống không nên thực hiện kiểm tra trùng lặp (conflict check) nếu chữ Hán mới khớp với chữ Hán hiện tại.
+     * [TC-WORD-009] Bỏ qua kiểm tra trùng lặp nếu chữ Hán không đổi.
+     * Mục tiêu: Tối ưu hóa số lượng query DB.
      */
-    it('should skip duplicate check when the simplified form remains unchanged (TC-WORD-009)', async () => {
+    it('should skip duplicate check if simplified remains same (TC-WORD-009)', async () => {
+      // --- ARRANGE ---
       const word = { id: 1, simplified: 'same' };
       const dto = { simplified: 'same' };
       mockQueryBuilder.getOne.mockResolvedValue(word);
 
+      // --- ACT ---
       await service.update(1, dto);
+
+      // --- ASSERT ---
       expect(mockWordRepo.findOne).not.toHaveBeenCalled();
     });
 
     /**
-     * [TC-WORD-010] Kiểm tra xử lý xung đột dữ liệu khi cập nhật chữ Hán bị trùng lặp với từ khác.
-     * Nếu chữ Hán mới đã được dùng bởi một từ có ID khác, hệ thống phải ném lỗi BadRequestException.
+     * [TC-WORD-010] Xử lý xung đột chữ Hán.
+     * Mục tiêu: Ngăn chặn cập nhật nếu chữ Hán mới đã tồn tại ở bản ghi khác.
      */
-    it('should throw BadRequestException if the new simplified form already exists for another word (TC-WORD-010)', async () => {
+    it('should throw BadRequestException if simplified form already exists (TC-WORD-010)', async () => {
+      // --- ARRANGE ---
       const word = { id: 1, simplified: 'old' };
       const dto = { simplified: 'exists' };
       mockQueryBuilder.getOne.mockResolvedValue(word);
       mockWordRepo.findOne.mockResolvedValue({ id: 2, simplified: 'exists' });
 
+      // --- ACT & ASSERT ---
       await expect(service.update(1, dto)).rejects.toThrow(BadRequestException);
     });
   });
 
   describe('remove', () => {
     /**
-     * [TC-WORD-011] Kiểm tra chức năng xóa một bản ghi từ vựng khỏi hệ thống.
-     * Xác nhận rằng lệnh xóa thực sự được gọi thông qua repository khi tìm thấy thực thể hợp lệ.
+     * [TC-WORD-011] Xóa từ vựng.
+     * Mục tiêu: Xác nhận lệnh xóa được gửi tới repository.
      */
-    it('should remove the word entity successfully when it exists (TC-WORD-011)', async () => {
+    it('should remove word entity successfully (TC-WORD-011)', async () => {
+      // --- ARRANGE ---
       const word = { id: 1 };
       mockQueryBuilder.getOne.mockResolvedValue(word);
+
+      // --- ACT ---
       await service.remove(1);
-      expect(mockWordRepo.remove).toHaveBeenCalledWith(word); // CheckDB
+
+      // --- ASSERT ---
+      expect(mockWordRepo.remove).toHaveBeenCalledWith(word);
+    });
+
+    /**
+     * [TC-WORD-011B] Xóa từ không tồn tại.
+     */
+    it('should throw NotFoundException when removing non-existent word (TC-WORD-011B)', async () => {
+      // --- ARRANGE ---
+      mockQueryBuilder.getOne.mockResolvedValue(null);
+
+      // --- ACT & ASSERT ---
+      await expect(service.remove(999)).rejects.toThrow(NotFoundException);
+      expect(mockWordRepo.remove).not.toHaveBeenCalled();
     });
   });
 
   describe('getWordStats', () => {
     /**
-     * [TC-WORD-012] Kiểm tra chức năng thống kê cơ bản của module từ vựng.
-     * Xác nhận hệ thống trả về chính xác tổng số lượng từ vựng hiện có trong cơ sở dữ liệu.
+     * [TC-WORD-012] Thống kê từ vựng.
      */
-    it('should return the accurate total count of words in the system (TC-WORD-012)', async () => {
+    it('should return total count of words (TC-WORD-012)', async () => {
+      // --- ARRANGE ---
       mockWordRepo.count.mockResolvedValue(50);
+
+      // --- ACT ---
       const result = await service.getWordStats();
+
+      // --- ASSERT ---
       expect(result.total).toBe(50);
+    });
+
+    /**
+     * [TC-WORD-012B] Thống kê khi DB rỗng.
+     */
+    it('should return total=0 if no words exist (TC-WORD-012B)', async () => {
+      // --- ARRANGE ---
+      mockWordRepo.count.mockResolvedValue(0);
+
+      // --- ACT ---
+      const result = await service.getWordStats();
+
+      // --- ASSERT ---
+      expect(result.total).toBe(0);
     });
   });
 
   describe('search', () => {
     /**
-     * [TC-WORD-013] Kiểm tra logic tra cứu nhanh tình trạng tồn tại của một từ vựng.
-     * Trường hợp từ vựng đã có trong hệ thống, kỳ vọng trả về trạng thái báo đã tồn tại.
+     * [TC-WORD-013] Kiểm tra sự tồn tại của từ.
      */
-    it('should indicate that the word exists when it is found in the database (TC-WORD-013)', async () => {
+    it('should return exists:true if found (TC-WORD-013)', async () => {
+      // --- ARRANGE ---
       const word = { id: 1, simplified: 'test' };
       mockQueryBuilder.getOne.mockResolvedValue(word);
+
+      // --- ACT ---
       const result = await service.search('test');
+
+      // --- ASSERT ---
       expect(result.exists).toBe(true);
       expect(result.wordId).toBe(1);
     });
 
     /**
-     * [TC-WORD-014] Kiểm tra logic tra cứu nhanh khi từ vựng hoàn toàn mới.
-     * Kỳ vọng trả về trạng thái chưa tồn tại để có thể thực hiện quy trình tạo mới.
+     * [TC-WORD-014] Từ không tồn tại.
      */
-    it('should indicate that the word does not exist when it is not found (TC-WORD-014)', async () => {
+    it('should return exists:false if not found (TC-WORD-014)', async () => {
+      // --- ARRANGE ---
       mockQueryBuilder.getOne.mockResolvedValue(null);
+
+      // --- ACT ---
       const result = await service.search('none');
+
+      // --- ASSERT ---
       expect(result.exists).toBe(false);
       expect(result.wordId).toBeNull();
     });
   });
 
   describe('getNextSenseNumber', () => {
-    // [TC-WORD-015] Get next number when senses exist
+    /**
+     * [TC-WORD-015] Lấy số thứ tự nghĩa tiếp theo.
+     */
     it('should return max+1 (TC-WORD-015)', async () => {
+      // --- ARRANGE ---
       mockQueryBuilder.getRawOne.mockResolvedValue({ max: 5 });
+
+      // --- ACT ---
       const result = await service.getNextSenseNumber(1);
+
+      // --- ASSERT ---
       expect(result).toBe(6);
     });
 
-    // [TC-WORD-016] Get 1 when no senses exist
+    /**
+     * [TC-WORD-016] Số thứ tự cho nghĩa đầu tiên.
+     */
     it('should return 1 when no senses exist (TC-WORD-016)', async () => {
+      // --- ARRANGE ---
       mockQueryBuilder.getRawOne.mockResolvedValue(null);
+
+      // --- ACT ---
       const result = await service.getNextSenseNumber(1);
+
+      // --- ASSERT ---
       expect(result).toBe(1);
     });
   });
 
   describe('createComplete', () => {
     const dto = {
-      word: { simplified: 'new' },
-      sense: { pinyin: 'xin' },
-      translation: { translation: 'tr', language: 'vn' },
+      word: {
+        simplified: 'new',
+        traditional: 'NEW',
+        pinyin: 'new',
+      },
+      sense: { pinyin: 'sense' },
+      translation: { translation: 'trans', language: 'vn' },
     };
 
     /**
-     * [TC-WORD-017] Kiểm tra chức năng khởi tạo từ vựng "trọn gói" lần đầu tiên.
-     * Quy trình bao gồm tạo mới Word, sau đó tạo Sense tương ứng mẫu và cuối cùng là bản dịch.
-     * Xác nhận tất cả các thành phần được lưu trữ đồng bộ.
+     * [TC-WORD-017] Tạo từ vựng trọn gói (Word + Sense + Translation).
      */
-    it('should create a complete new word with sense and translation successfully (TC-WORD-017)', async () => {
+    it('should create complete word successfully (TC-WORD-017)', async () => {
+      // --- ARRANGE ---
       mockWordRepo.findOne.mockResolvedValue(null);
       mockWordRepo.create.mockReturnValue({ id: 10 });
       mockWordRepo.save.mockResolvedValue({ id: 10 });
@@ -319,11 +454,12 @@ describe('WordsService', () => {
       mockSenseRepo.save.mockResolvedValue({ id: 20 });
       mockTranslationRepo.create.mockReturnValue({});
       mockQueryBuilder.getRawOne.mockResolvedValue({ max: 0 });
-      // Final findById call
       mockQueryBuilder.getOne.mockResolvedValue({ id: 10 });
 
+      // --- ACT ---
       const result = await service.createComplete(dto);
 
+      // --- ASSERT ---
       expect(mockWordRepo.save).toHaveBeenCalled();
       expect(mockSenseRepo.save).toHaveBeenCalled();
       expect(mockTranslationRepo.save).toHaveBeenCalled();
@@ -331,51 +467,61 @@ describe('WordsService', () => {
     });
 
     /**
-     * [TC-WORD-018] Kiểm tra tạo nghĩa mới trọn gói cho một từ vựng đã có sẵn trong hệ thống thông qua ID.
-     * Trong kịch bản này, hệ thống sẽ bỏ qua bước tạo Word và chỉ tạo thêm Sense + Translation mới.
+     * [TC-WORD-018] Tạo nghĩa mới cho từ vựng sẵn có.
      */
-    it('should use the existing wordId and only create sense/translation (TC-WORD-018)', async () => {
+    it('should use existing wordId and only create sense/translation (TC-WORD-018)', async () => {
+      // --- ARRANGE ---
       const dtoWithId = { ...dto, wordId: 5 };
       mockSenseRepo.create.mockReturnValue({ id: 20 });
       mockTranslationRepo.create.mockReturnValue({});
       mockQueryBuilder.getOne.mockResolvedValue({ id: 5 });
 
+      // --- ACT ---
       await service.createComplete(dtoWithId);
 
+      // --- ASSERT ---
       expect(mockWordRepo.save).not.toHaveBeenCalled();
       expect(mockSenseRepo.create).toHaveBeenCalledWith(expect.objectContaining({ wordId: 5 }));
     });
 
+
     /**
-     * [TC-WORD-019] Kiểm tra tính hợp lệ của dữ liệu đầu vào cho quy trình tạo trọn gói.
-     * Hệ thống phải ném lỗi BadRequestException nếu thiếu hoàn toàn cả mã ID từ vựng và dữ liệu chữ Hán để tạo mới.
+     * [TC-WORD-019] Thiếu thông tin định danh từ.
      */
-    it('should throw BadRequestException if both wordId and word data are missing (TC-WORD-019)', async () => {
+    it('should throw BadRequestException if word data is missing (TC-WORD-019)', async () => {
+      // --- ARRANGE ---
       const badDto = { sense: {}, translation: {} } as any;
+
+      // --- ACT & ASSERT ---
       await expect(service.createComplete(badDto)).rejects.toThrow(BadRequestException);
     });
 
     /**
-     * [TC-WORD-020] Kiểm tra xung đột chữ Hán khi thực hiện tạo mới trọn gói.
-     * Nếu chữ Hán định tạo đã tồn tại, hệ thống phải ngăn chặn và báo lỗi để tránh trùng lặp dư thừa.
+     * [TC-WORD-020] Xung đột chữ Hán khi tạo trọn gói.
      */
-    it('should throw BadRequestException if trying to create a word with an existing simplified form (TC-WORD-020)', async () => {
+    it('should throw BadRequestException if word already exists (TC-WORD-020)', async () => {
+      // --- ARRANGE ---
       mockWordRepo.findOne.mockResolvedValue({ id: 1 });
+
+      // --- ACT & ASSERT ---
       await expect(service.createComplete(dto)).rejects.toThrow(BadRequestException);
     });
 
     /**
-     * [TC-WORD-021] Kiểm tra cơ chế tự động gán ngôn ngữ mặc định trong quy trình tạo trọn gói.
-     * Nếu bản dịch không khai báo ngôn ngữ, hệ thống sẽ mặc định gán là tiếng Việt ('vn').
+     * [TC-WORD-021] Ngôn ngữ mặc định cho bản dịch.
      */
-    it('should default the translation language to "vn" if not explicitly provided (TC-WORD-021)', async () => {
+    it('should default language to vn if missing (TC-WORD-021)', async () => {
+      // --- ARRANGE ---
       const dtoNoLang = { ...dto, translation: { translation: 'tr' } };
       mockWordRepo.findOne.mockResolvedValue(null);
       mockWordRepo.save.mockResolvedValue({ id: 10 });
       mockSenseRepo.save.mockResolvedValue({ id: 20 });
       mockQueryBuilder.getOne.mockResolvedValue({});
 
+      // --- ACT ---
       await service.createComplete(dtoNoLang);
+
+      // --- ASSERT ---
       expect(mockTranslationRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ language: 'vn' }),
       );
@@ -386,16 +532,15 @@ describe('WordsService', () => {
     const senseId = 100;
     const dto = {
       word: { simplified: 'upd' },
-      sense: { pinyin: 'upd pinyin' },
-      translation: { translation: 'new tr' },
+      sense: { pinyin: 'upd sense' },
+      translation: { translation: 'upd trans' },
     };
 
     /**
-     * [TC-WORD-022] Kiểm tra quy trình cập nhật đồng thời (All-in-one) thông qua mã ID nghĩa của từ.
-     * Quy trình này cho phép thực hiện nhiều thay đổi (Word, Sense và cả Translation) chỉ bằng một lần gọi API.
-     * Xác nhận tính đồng bộ của dữ liệu sau cập nhật.
+     * [TC-WORD-022] Cập nhật trọn gói theo SenseID.
      */
-    it('should update word, sense and existing translation successfully via senseId (TC-WORD-022)', async () => {
+    it('should update complete word by senseId successfully (TC-WORD-022)', async () => {
+      // --- ARRANGE ---
       const word = { id: 1, simplified: 'old' };
       const wordSense = {
         id: senseId,
@@ -404,11 +549,13 @@ describe('WordsService', () => {
         translations: [{ language: 'vn', translation: 'old tr' }],
       };
       mockSenseRepo.findOne.mockResolvedValue(wordSense);
-      mockWordRepo.findOne.mockResolvedValue(null); // No word conflict
-      mockQueryBuilder.getOne.mockResolvedValue({ id: 1 }); // Final findById
+      mockWordRepo.findOne.mockResolvedValue(null);
+      mockQueryBuilder.getOne.mockResolvedValue({ id: 1 });
 
+      // --- ACT ---
       const result = await service.updateCompleteBySenseId(senseId, dto);
 
+      // --- ASSERT ---
       expect(mockWordRepo.save).toHaveBeenCalled();
       expect(mockSenseRepo.save).toHaveBeenCalled();
       expect(mockTranslationRepo.save).toHaveBeenCalled();
@@ -416,47 +563,53 @@ describe('WordsService', () => {
     });
 
     /**
-     * [TC-WORD-023] Kiểm tra xử lý ngoại lệ khi cung cấp mã nghĩa không tồn tại để cập nhật trọn gói.
-     * Hệ thống phải ném lỗi NotFoundException để bảo vệ quy trình nghiệp vụ.
+     * [TC-WORD-023] SenseID không hợp lệ.
      */
-    it('should throw NotFoundException during complete update if the senseId is invalid (TC-WORD-023)', async () => {
+    it('should throw NotFoundException if senseId is invalid (TC-WORD-023)', async () => {
+      // --- ARRANGE ---
       mockSenseRepo.findOne.mockResolvedValue(null);
+
+      // --- ACT & ASSERT ---
       await expect(service.updateCompleteBySenseId(999, dto)).rejects.toThrow(NotFoundException);
     });
 
     /**
-     * [TC-WORD-024] Kiểm tra logic cập nhật "Word" thông qua quy trình trọn gói mà không làm thay đổi chữ Hán.
-     * Đảm bảo hệ thống không báo lỗi xung đột nếu nội dung cập nhật trùng khớp với dữ liệu gốc của từ vựng đó.
+     * [TC-WORD-024] Giữ nguyên chữ Hán khi cập nhật trọn gói.
      */
-    it('should successfully update the word if the simplified form remains unchanged in the complete update (TC-WORD-024)', async () => {
+    it('should update successfully if simplified remains unchanged (TC-WORD-024)', async () => {
+      // --- ARRANGE ---
       const word = { id: 1, simplified: 'upd' };
       const wordSense = { id: senseId, word, translations: [] };
       mockSenseRepo.findOne.mockResolvedValue(wordSense);
 
+      // --- ACT ---
       await service.updateCompleteBySenseId(senseId, dto);
+
+      // --- ASSERT ---
       expect(mockWordRepo.findOne).not.toHaveBeenCalled();
     });
 
     /**
-     * [TC-WORD-025] Kiểm tra xử lý xung đột chữ Hán trong quy trình cập nhật trọn gói.
-     * Nếu thay đổi chữ Hán bị trùng lặp với một từ vựng khác sẵn có, hệ thống phải ngăn chặn hành động cập nhật.
+     * [TC-WORD-025] Xung đột chữ Hán khi cập nhật trọn gói.
      */
-    it('should throw BadRequestException if updating the word form leads to a conflict during complete update (TC-WORD-025)', async () => {
+    it('should throw BadRequestException on word conflict (TC-WORD-025)', async () => {
+      // --- ARRANGE ---
       const word = { id: 1, simplified: 'old' };
       const wordSense = { id: senseId, word, translations: [] };
       mockSenseRepo.findOne.mockResolvedValue(wordSense);
       mockWordRepo.findOne.mockResolvedValue({ id: 2, simplified: 'upd' });
 
+      // --- ACT & ASSERT ---
       await expect(service.updateCompleteBySenseId(senseId, dto)).rejects.toThrow(
         BadRequestException,
       );
     });
 
     /**
-     * [TC-WORD-026] Kiểm tra khả năng tạo mới thành phần thiếu sót trong quá trình cập nhật trọn gói.
-     * Trường hợp bản dịch cho ngôn ngữ mục tiêu (ví dụ 'vn') chưa tồn tại, hệ thống phải tự động tạo mới thay vì báo lỗi.
+     * [TC-WORD-026] Tạo mới bản dịch nếu chưa tồn tại cho ngôn ngữ mục tiêu.
      */
-    it('should create a new translation record if it does not exist for the target language (TC-WORD-026)', async () => {
+    it('should create new translation record if missing (TC-WORD-026)', async () => {
+      // --- ARRANGE ---
       const wordSense = {
         id: senseId,
         wordId: 1,
@@ -465,7 +618,10 @@ describe('WordsService', () => {
       mockSenseRepo.findOne.mockResolvedValue(wordSense);
       mockQueryBuilder.getOne.mockResolvedValue({});
 
+      // --- ACT ---
       await service.updateCompleteBySenseId(senseId, { translation: { translation: 'vn tr' } });
+
+      // --- ASSERT ---
       expect(mockTranslationRepo.create).toHaveBeenCalled();
       expect(mockTranslationRepo.save).toHaveBeenCalled();
     });

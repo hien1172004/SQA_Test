@@ -69,10 +69,11 @@ describe('RagService', () => {
 
   describe('query', () => {
     /**
-     * TC-RAG-RAG-001
-     * Objective: Happy path - search → LLM → save context → return response
+     * [TC-RAG-RAG-001] Thực hiện quy trình RAG (Retrieval-Augmented Generation) thành công.
+     * Mục tiêu: Xác nhận luồng đi từ tìm kiếm vector -> gọi LLM -> lưu ngữ cảnh -> trả về câu trả lời.
      */
     it('TC-RAG-RAG-001 - should perform full RAG flow successfully', async () => {
+      // --- ARRANGE ---
       const sources = [
         {
           id: 1,
@@ -84,11 +85,13 @@ describe('RagService', () => {
         },
       ];
       vectorSearchService.searchSimilar.mockResolvedValue(sources);
+      // Giả lập phản hồi từ dịch vụ LLM (ví dụ: Qwen hoặc Gemini).
       mockedAxios.post.mockResolvedValue({
         data: { text: 'Câu trả lời', confidence: 0.9 },
       });
       ragContextRepository.save!.mockResolvedValue({ id: 100 });
 
+      // --- ACT ---
       const result = await service.query({
         query: 'Test',
         userId: 1,
@@ -96,12 +99,16 @@ describe('RagService', () => {
         hskLevel: 1,
       });
 
+      // --- ASSERT ---
+      // [CheckDB] Xác nhận hệ thống thực hiện tìm kiếm ngữ cảnh tương đồng trước khi hỏi LLM.
       expect(vectorSearchService.searchSimilar).toHaveBeenCalled();
+      // Xác nhận tham số gọi API LLM (model, timeout).
       expect(mockedAxios.post).toHaveBeenCalledWith(
         'http://llm:8001/generate',
         expect.objectContaining({ model: 'gemini-2.5-flash' }),
         expect.objectContaining({ timeout: 60000 }),
       );
+      // [CheckDB] Xác nhận lịch sử truy vấn được lưu lại để phục vụ phân tích.
       expect(ragContextRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ userId: 1, query: 'Test' }),
       );
@@ -110,31 +117,41 @@ describe('RagService', () => {
     });
 
     /**
-     * TC-RAG-RAG-002
-     * Objective: Embedding service lỗi → graceful degrade, sources=[], confidence cap 0.3
+     * [TC-RAG-RAG-002] Xử lý an toàn khi dịch vụ Embedding (Vector Search) gặp sự cố.
+     * Mục tiêu: Hệ thống vẫn hoạt động nhưng giảm độ tin cậy của câu trả lời.
      */
     it('TC-RAG-RAG-002 - should degrade gracefully when embedding fails', async () => {
+      // --- ARRANGE ---
       vectorSearchService.searchSimilar.mockRejectedValue(new Error('down'));
       mockedAxios.post.mockResolvedValue({
         data: { text: 'fallback', confidence: 0.8 },
       });
       ragContextRepository.save!.mockResolvedValue({ id: 101 });
 
+      // --- ACT ---
       const result = await service.query({ query: 'X' });
+
+      // --- ASSERT ---
+      // Không có nguồn dẫn chứng (sources) do lỗi search.
       expect(result.sources).toEqual([]);
+      // [CheckDB] Độ tin cậy bị giới hạn tối đa 0.3 vì không có dữ liệu tham chiếu.
       expect(result.confidence).toBeLessThanOrEqual(0.3);
     });
 
     /**
-     * TC-RAG-RAG-003
-     * Objective: type=grammar → sourceTypes filter chỉ GRAMMAR
+     * [TC-RAG-RAG-003] Lọc ngữ cảnh theo loại hình Ngữ pháp (Grammar).
      */
     it('TC-RAG-RAG-003 - should filter to GRAMMAR sourceType when type=grammar', async () => {
+      // --- ARRANGE ---
       vectorSearchService.searchSimilar.mockResolvedValue([]);
       mockedAxios.post.mockResolvedValue({ data: { text: 'a' } });
       ragContextRepository.save!.mockResolvedValue({ id: 1 });
 
+      // --- ACT ---
       await service.query({ query: 'X', type: 'grammar' });
+
+      // --- ASSERT ---
+      // [CheckDB] Xác nhận chỉ tìm kiếm trong bảng dữ liệu GRAMMAR.
       expect(vectorSearchService.searchSimilar).toHaveBeenCalledWith(
         'X',
         expect.objectContaining({
@@ -144,15 +161,19 @@ describe('RagService', () => {
     });
 
     /**
-     * TC-RAG-RAG-004
-     * Objective: type=lesson → filter [CONTENT, QUESTION]
+     * [TC-RAG-RAG-004] Lọc ngữ cảnh theo loại hình Bài học (Lesson).
+     * Mục tiêu: Tìm kiếm trong cả nội dung (Content) và câu hỏi (Question).
      */
     it('TC-RAG-RAG-004 - should filter to CONTENT+QUESTION when type=lesson', async () => {
+      // --- ARRANGE ---
       vectorSearchService.searchSimilar.mockResolvedValue([]);
       mockedAxios.post.mockResolvedValue({ data: { text: 'a' } });
       ragContextRepository.save!.mockResolvedValue({ id: 1 });
 
+      // --- ACT ---
       await service.query({ query: 'X', type: 'lesson' });
+
+      // --- ASSERT ---
       expect(vectorSearchService.searchSimilar).toHaveBeenCalledWith(
         'X',
         expect.objectContaining({
@@ -162,39 +183,46 @@ describe('RagService', () => {
     });
 
     /**
-     * TC-RAG-RAG-005
-     * Objective: HSK level <= 2 → minSimilarity giảm, maxSources tăng
+     * [TC-RAG-RAG-005] Điều chỉnh ngưỡng tìm kiếm (Threshold) cho trình độ sơ cấp (HSK level <= 2).
+     * Mục tiêu: Mở rộng phạm vi tìm kiếm để hỗ trợ người mới học tốt hơn.
      */
     it('TC-RAG-RAG-005 - should adjust thresholds for beginner HSK levels', async () => {
+      // --- ARRANGE ---
       vectorSearchService.searchSimilar.mockResolvedValue([]);
       mockedAxios.post.mockResolvedValue({ data: { text: 'a' } });
       ragContextRepository.save!.mockResolvedValue({ id: 1 });
 
+      // --- ACT ---
       await service.query({ query: 'X', type: 'word', hskLevel: 1 });
+
+      // --- ASSERT ---
       const callOptions = vectorSearchService.searchSimilar.mock.calls[0][1];
-      // word base = 0.7, hsk<=2 trừ 0.1 = 0.6
+      // [CheckDB] Ngưỡng tương đồng tối thiểu giảm xuống 0.6 thay vì mặc định 0.7.
       expect(callOptions.minSimilarity).toBeCloseTo(0.6, 5);
-      // word base limit = 3, hsk<=2 +2 = 5
+      // [CheckDB] Số lượng nguồn tham khảo tăng lên 5 thay vì mặc định 3.
       expect(callOptions.limit).toBe(5);
     });
 
     /**
-     * TC-RAG-RAG-006
-     * Objective: LLM service lỗi non-dev → throw "RAG query failed"
+     * [TC-RAG-RAG-006] Lỗi nghiêm trọng khi dịch vụ LLM không phản hồi trong môi trường Production.
      */
     it('TC-RAG-RAG-006 - should throw when LLM fails in non-dev', async () => {
+      // --- ARRANGE ---
       vectorSearchService.searchSimilar.mockResolvedValue([]);
       mockedAxios.post.mockRejectedValue(new Error('llm down'));
+
+      // --- ACT & ASSERT ---
       await expect(service.query({ query: 'X' })).rejects.toThrow(
         /RAG query failed/,
       );
     });
 
     /**
-     * TC-RAG-RAG-007
-     * Objective: LLM lỗi trong dev → fallback response (vẫn trả về)
+     * [TC-RAG-RAG-007] Cơ chế phản hồi thay thế (Fallback) trong môi trường Phát triển (Dev) khi LLM lỗi.
+     * Mục tiêu: Hỗ trợ lập trình viên kiểm tra luồng RAG mà không phụ thuộc hoàn toàn vào API LLM.
      */
     it('TC-RAG-RAG-007 - should return fallback in dev when LLM fails', async () => {
+      // --- ARRANGE ---
       process.env.NODE_ENV = 'development';
       vectorSearchService.searchSimilar.mockResolvedValue([
         {
@@ -208,36 +236,47 @@ describe('RagService', () => {
       mockedAxios.post.mockRejectedValue(new Error('llm down'));
       ragContextRepository.save!.mockResolvedValue({ id: 1 });
 
+      // --- ACT ---
       const result = await service.query({ query: 'X' });
+
+      // --- ASSERT ---
       expect(result.answer).toBeDefined();
       expect(result.confidence).toBe(0.5);
     });
 
     /**
-     * TC-RAG-RAG-008
-     * Objective: userContext dạng object → JSON.stringify khi build prompt
+     * [TC-RAG-RAG-008] Chấp nhận ngữ cảnh người dùng dưới dạng đối tượng (Object).
      */
     it('TC-RAG-RAG-008 - should accept object userContext', async () => {
+      // --- ARRANGE ---
       vectorSearchService.searchSimilar.mockResolvedValue([]);
       mockedAxios.post.mockResolvedValue({ data: { text: 'a' } });
       ragContextRepository.save!.mockResolvedValue({ id: 1 });
 
+      // --- ACT ---
       await service.query({
         query: 'X',
         context: { foo: 'bar' },
       });
+
+      // --- ASSERT ---
       expect(mockedAxios.post).toHaveBeenCalled();
     });
   });
 
   describe('getQueryHistory', () => {
     /**
-     * TC-RAG-RAG-009
-     * Objective: Lấy history theo userId, default limit=10
+     * [TC-RAG-RAG-009] Truy xuất lịch sử truy vấn RAG của người dùng với giới hạn mặc định.
      */
     it('TC-RAG-RAG-009 - should fetch history with default limit', async () => {
+      // --- ARRANGE ---
       ragContextRepository.find!.mockResolvedValue([]);
+
+      // --- ACT ---
       await service.getQueryHistory(1);
+
+      // --- ASSERT ---
+      // [CheckDB] Xác nhận service truy vấn lịch sử mới nhất (DESC) và giới hạn mặc định 10 bản ghi.
       expect(ragContextRepository.find).toHaveBeenCalledWith({
         where: { userId: 1 },
         order: { createdAt: 'DESC' },
@@ -246,12 +285,16 @@ describe('RagService', () => {
     });
 
     /**
-     * TC-RAG-RAG-010
-     * Objective: Lấy history với limit tùy chỉnh
+     * [TC-RAG-RAG-010] Truy xuất lịch sử truy vấn với giới hạn (Limit) tùy chỉnh.
      */
     it('TC-RAG-RAG-010 - should respect custom limit', async () => {
+      // --- ARRANGE ---
       ragContextRepository.find!.mockResolvedValue([]);
+
+      // --- ACT ---
       await service.getQueryHistory(1, 5);
+
+      // --- ASSERT ---
       expect(ragContextRepository.find).toHaveBeenCalledWith(
         expect.objectContaining({ take: 5 }),
       );
@@ -260,20 +303,24 @@ describe('RagService', () => {
 
   describe('getAnalytics', () => {
     /**
-     * TC-RAG-RAG-011
-     * Objective: Aggregate analytics: totalQueries, avgProcessingTime, popularQueries
+     * [TC-RAG-RAG-011] Tổng hợp các chỉ số hiệu suất của hệ thống RAG.
+     * Mục tiêu: Xác nhận việc tính toán tổng số truy vấn, thời gian xử lý trung bình và các từ khóa phổ biến.
      */
     it('TC-RAG-RAG-011 - should aggregate analytics correctly', async () => {
+      // --- ARRANGE ---
       ragContextRepository.count!.mockResolvedValue(50);
       ragContextRepository.__queryBuilder.getRawOne
-        .mockResolvedValueOnce({ avg: '125.5' }) // avgProcessingTime
-        .mockResolvedValueOnce({ avg: '3.2' }); // avgSourcesUsed
+        .mockResolvedValueOnce({ avg: '125.5' }) // Giả lập thời gian xử lý trung bình (ms).
+        .mockResolvedValueOnce({ avg: '3.2' });  // Giả lập số lượng nguồn tham chiếu trung bình.
       ragContextRepository.__queryBuilder.getRawMany.mockResolvedValue([
         { query: 'A', count: '10' },
         { query: 'B', count: '5' },
       ]);
 
+      // --- ACT ---
       const result = await service.getAnalytics();
+
+      // --- ASSERT ---
       expect(result.totalQueries).toBe(50);
       expect(result.avgProcessingTime).toBeCloseTo(125.5);
       expect(result.popularQueries).toHaveLength(2);
@@ -281,11 +328,13 @@ describe('RagService', () => {
     });
 
     /**
-     * TC-RAG-RAG-012
-     * Objective: Lỗi DB → wrap throw
+     * [TC-RAG-RAG-012] Xử lý lỗi hệ thống khi quá trình tổng hợp dữ liệu gặp sự cố cơ sở dữ liệu.
      */
     it('TC-RAG-RAG-012 - should wrap and throw on DB error', async () => {
+      // --- ARRANGE ---
       ragContextRepository.count!.mockRejectedValue(new Error('boom'));
+
+      // --- ACT & ASSERT ---
       await expect(service.getAnalytics()).rejects.toThrow(
         /Failed to get RAG analytics/,
       );
@@ -293,8 +342,7 @@ describe('RagService', () => {
 
     /**
      * TC-RAG-RAG-016
-     * Objective: type=general (default) + không có HSK level → cover branch fallback
-     *            của getSmartMinSimilarity/getSmartMaxSources (không trừ 0.1, không +2)
+     * Objective: Kiểm tra việc sử dụng các giá trị mặc định khi thiếu tham số type và hskLevel.
      */
     it('TC-RAG-RAG-016 - should use general defaults when type/hskLevel missing', async () => {
       vectorSearchService.searchSimilar.mockResolvedValue([]);
@@ -310,8 +358,7 @@ describe('RagService', () => {
 
     /**
      * TC-RAG-RAG-017
-     * Objective: query có userContext dạng string + sources có metadata.hskLevel
-     *            → cover prompt build branch (typeof string + hskInfo)
+     * Objective: Xác nhận logic xây dựng prompt hoạt động đúng khi userContext là chuỗi văn bản.
      */
     it('TC-RAG-RAG-017 - should accept string userContext and label hskLevel in prompt', async () => {
       vectorSearchService.searchSimilar.mockResolvedValue([
@@ -352,8 +399,7 @@ describe('RagService', () => {
 
     /**
      * TC-RAG-RAG-015
-     * Objective: Fallback response trong dev với sources nhiều sourceType khác nhau
-     *            để cover toàn bộ switch case của getSourceLabel
+     * Objective: Xác nhận tất cả các loại nguồn dữ liệu (SourceType) đều được phân loại đúng trong phản hồi fallback.
      */
     it('TC-RAG-RAG-015 - should label all source types correctly in fallback', async () => {
       process.env.NODE_ENV = 'development';
@@ -395,6 +441,48 @@ describe('RagService', () => {
       const result = await service.getAnalytics();
       expect(result.avgProcessingTime).toBe(0);
       expect(result.avgSourcesUsed).toBe(0);
+    });
+
+    /**
+     * TC-RAG-RAG-018
+     * Objective: Xử lý trường hợp phản hồi từ LLM sử dụng trường dữ liệu thay thế.
+     */
+    it('TC-RAG-RAG-018 - should handle LLM response with "response" field', async () => {
+      vectorSearchService.searchSimilar.mockResolvedValue([]);
+      mockedAxios.post.mockResolvedValue({ data: { response: 'Hello from response' } });
+      ragContextRepository.save!.mockResolvedValue({ id: 1 });
+
+      const result = await service.query({ query: 'Q' });
+      expect(result.answer).toBe('Hello from response');
+    });
+
+    /**
+     * TC-RAG-RAG-019
+     * Objective: Xử lý an toàn khi phản hồi từ LLM không chứa các trường văn bản mong đợi.
+     */
+    it('TC-RAG-RAG-019 - should handle LLM response with no text fields', async () => {
+      vectorSearchService.searchSimilar.mockResolvedValue([]);
+      mockedAxios.post.mockResolvedValue({ data: {} });
+      ragContextRepository.save!.mockResolvedValue({ id: 1 });
+
+      const result = await service.query({ query: 'Q' });
+      expect(result.answer).toBe('No response generated');
+    });
+
+    /**
+     * TC-RAG-RAG-020
+     * Objective: Kiểm tra cơ chế tự động chuyển về cấu hình mặc định (general) cho các loại truy vấn không xác định.
+     */
+    it('TC-RAG-RAG-020 - should use general fallback for unknown query type', async () => {
+      vectorSearchService.searchSimilar.mockResolvedValue([]);
+      mockedAxios.post.mockResolvedValue({ data: { text: 'a' } });
+      ragContextRepository.save!.mockResolvedValue({ id: 1 });
+
+      await service.query({ query: 'Q', type: 'unknown' as any });
+      const opts = vectorSearchService.searchSimilar.mock.calls[0][1];
+      // general: similarity 0.6, limit 5
+      expect(opts.minSimilarity).toBe(0.6);
+      expect(opts.limit).toBe(5);
     });
   });
 });
